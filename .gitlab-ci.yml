@@ -1,0 +1,53 @@
+stages:
+  - check_proxies
+  - update_files
+
+variables:
+  GIT_STRATEGY: clone
+  GIT_DEPTH: 1
+
+before_script:
+  - apt-get update -qq && apt-get install -y -qq git curl
+  - pip install --upgrade pip
+  - pip install -r requirements.txt
+  - git config --global user.email "ci@nandark.ir"
+  - git config --global user.name "Proxy Bot"
+  - git remote set-url origin https://${GITLAB_USER}:${GITLAB_TOKEN}@gitlab.com/nandark-ir/proxyscraper.git
+
+check_proxies:
+  stage: check_proxies
+  script:
+    - echo "Starting proxy check at $(date)"
+    - python proxy_check.py
+    - echo "Found $(wc -l < alive_proxies.txt) alive proxies"
+    - python build_proxy_pac.py
+  artifacts:
+    paths:
+      - alive_proxies.txt
+      - proxy.pac
+    expire_in: 1 hour
+  retry:
+    max: 2
+    when:
+      - runner_system_failure
+      - stuck_or_timeout_failure
+
+update_repository:
+  stage: update_files
+  script:
+    - |
+      if git diff --quiet alive_proxies.txt proxy.pac; then
+        echo "No changes detected, skipping commit"
+        exit 0
+      fi
+    - git add alive_proxies.txt proxy.pac
+    - git commit -m "Auto-update proxies - $(date '+%Y-%m-%d %H:%M')"
+    - git push origin main
+    - echo "Repository updated successfully"
+  dependencies:
+    - check_proxies
+  only:
+    variables:
+      - $GITLAB_USER
+      - $GITLAB_TOKEN
+  when: on_success
